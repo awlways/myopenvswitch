@@ -73,6 +73,8 @@
 #include "sys/time.h"
 #include "inttypes.h"
 #include "ofproto-dpif-xlate.h"
+#include <netinet/in.h>
+
 
 //define hash table
 struct last_time_hash {
@@ -3929,6 +3931,23 @@ new_data_record(struct dp_hash_tables *datapath_hash_table)
     datapath_hash_table->last_flowlet_size = datapath_hash_table->current_flowlet_size;
     datapath_hash_table->current_flowlet_size = 0;
 }
+
+static void ipv4_change_dsfield(struct ip_header *iph,__u8 mask,
+    __u8 value)
+{
+    uint32_t check = ntohs((OVS_FORCE uint16_t)iph->ip_csum);
+    uint8_t dsfield;
+
+    dsfield = (iph->ip_tos & mask) | value;
+    check += iph->ip_tos;
+    if ((check+1) >> 16) check = (check+1) & 0xffff;
+    check -= dsfield;
+    check += check >> 16; /* adjust carry */
+    iph->ip_csum = (OVS_FORCE uint16_t )htons(check);
+    iph->ip_tos = dsfield;
+}
+
+
 static void
 xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 {
@@ -3939,6 +3958,13 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     uint16_t tcp_dst;
     char *datapath_name;
     struct dp_hash_tables *datapath_hash_table;
+    struct flow_wildcards *wc = ctx->wc;
+    const struct dp_packet *b = ctx->xin->packet;
+    struct dp_packet *packet = CONST_CAST(struct dp_packet *, b);
+    // struct flow * flow = CONST_CAST(struct flow *, ctx->xin->upcall_flow);
+    // const struct ofpact *a;
+
+    // const void *data = dp_packet_data(ctx->xin->packet);
 
     if(fp == NULL){
         if((fp = fopen("/home/tank/ovstest/log/flowlet_log.txt", "a+")) == NULL) {
@@ -3947,9 +3973,33 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
         }
     }
 
-    datapath_name = ctx->xbridge->name;
+    // uint16_t dl_type;
+    // dl_type = ctx->xin->flow.dl_type;
+    
+    // fprintf(fp,"packet dl_type %16u\n",dl_type);
 
+    datapath_name = ctx->xbridge->name;
     fprintf(fp,"datapath:%s\n", datapath_name);
+
+    struct ip_header *nh = dp_packet_l3(b);
+    fprintf(fp, "ip_tos:%8u\n", nh->ip_tos);
+    // nh->ip_tos = 3;
+    ipv4_change_dsfield((struct ip_header *)dp_packet_l3(b), 0x00, (7 << 2)|2);
+    struct ip_header *nh2 = dp_packet_l3(b);
+    fprintf(fp, "ip_tos2:%8u\n", nh2->ip_tos);
+
+    // if(is_ip_any(flow)){
+
+    //     wc->masks.nw_tos |= IP_ECN_MASK;
+    //     flow->nw_tos = 3<<2;
+    //     flow->nw_tos |= 2;
+    //     fprintf(fp, "wc_tos:%8u\n", wc->masks.nw_tos);
+    //     fprintf(fp, "flow_tos:%8u\n", flow->nw_tos);
+    //     fprintf(fp, "upcall_flow_tos:%8u\n", ctx->xin->upcall_flow->nw_tos);
+    //     // flow->nw_tos &= ~IP_ECN_MASK;
+    //     // flow->nw_tos |= ofpact_get_SET_IP_ECN(a)->ecn;
+    // }
+
 
     //get hash table for datapath named datapath_name
     datapath_hash_table = get_dp_hash_table(datapath_name);
@@ -3965,12 +4015,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     tcp_src = ctx->xin->flow.tp_src;
     tcp_dst = ctx->xin->flow.tp_dst;
 
-    fprintf(fp, "ipsrc:%32u ipdst:%32u tcpsrc:%16u tcpdst:%16u\n", ip_src, ip_dst, tcp_src, tcp_dst);
-    //fflush(fp);
-
-    uint16_t dl_type;
-    dl_type = ctx->xin->flow.dl_type;
-    //fprintf(fp,"packet dl_type %16u\n",dl_type);
+    //fprintf(fp, "ipsrc:%32u ipdst:%32u tcpsrc:%16u tcpdst:%16u\n", ip_src, ip_dst, tcp_src, tcp_dst);
     //fflush(fp);
 
     //hash four tuple ,get hash key
