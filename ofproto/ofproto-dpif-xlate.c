@@ -2,7 +2,7 @@
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at:
+4 * You may obtain a copy of the License at:
  *
  *     http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -75,7 +75,9 @@
 #include "ofproto-dpif-xlate.h"
 #include <netinet/in.h>
 
-
+#define FLOWLET_PRIO_NUM 4
+int FLOWLET_PRIO_THRESH[FLOWLET_PRIO_NUM - 1] = {8,32,128};
+int FLOWLET_PRIO_DSCP[FLOWLET_PRIO_NUM] = {0, 1, 2, 3};
 //define hash table
 struct last_time_hash {
     uint32_t key;
@@ -109,7 +111,7 @@ struct dp_hash_tables *hash_tables = NULL;
 
 
 //define timeout
-uint64_t timeout = 6000; //us
+uint64_t timeout = 20000; //us
 //uint64_t packet_count = 0;
 //uint64_t flowlet_count = 0;
 //uint64_t group_action_packet_counter = 0;
@@ -3952,7 +3954,35 @@ static void ipv4_change_dsfield(struct ip_header *iph,__u8 mask,
     iph->ip_csum = (OVS_FORCE uint16_t )htons(check);
     iph->ip_tos = dsfield;
 }
+static int flowlet_priority(uint64_t size){
+        int i = 0;
 
+    for (i = 0; i < FLOWLET_PRIO_NUM - 1; i++)
+    {
+        if (size <= FLOWLET_PRIO_THRESH[i])
+            return FLOWLET_PRIO_DSCP[i];
+    }
+
+    //By default, return DSCP of the lowest priority
+    return FLOWLET_PRIO_DSCP[FLOWLET_PRIO_NUM - 1];
+}
+
+static void dscp_set_queue(struct xlate_ctx *ctx, uint8_t dscp){
+    uint32_t queue_id = (uint32_t)dscp;
+    uint32_t skb_priority;
+
+    if (!dpif_queue_to_priority(ctx->xbridge->dpif, queue_id, &skb_priority)) {
+        // fprintf(fp, "skb_priority:%32u\n", skb_priority);
+        ctx->xin->flow.skb_priority = skb_priority;
+    }
+}
+
+//set_queue  actions
+// case OFPACT_SET_QUEUE:
+//     memset(&wc->masks.skb_priority, 0xff,
+//            sizeof wc->masks.skb_priority);
+//     xlate_set_queue_action(ctx, ofpact_get_SET_QUEUE(a)->queue_id);
+//     break;
 
 static void
 xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
@@ -3978,6 +4008,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 
     char *outbuf = (char*)malloc(sizeof(char)*1024);
     int offset = 0;
+    int dscp = 0;
     // const void *data = dp_packet_data(ctx->xin->packet);
 
     // uint16_t dl_type;
@@ -3992,9 +4023,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     // fprintf(fp, "ip_tos:%8u\n", nh->ip_tos);
     // nh->ip_tos = 3;
     // if(is_ip_any(&ctx->xin->flow)){
-    if(ctx->xin->packet){
-    ipv4_change_dsfield((struct ip_header *)dp_packet_l3(ctx->xin->packet), 0x00, (7 << 2)|2);
-    }
+
     // }
     
     // struct ip_header *nh2 = dp_packet_l3(b);
@@ -4002,17 +4031,6 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
    
     // fprintf(fp, "ip_tos2:%8u\n", nh2->ip_tos);
 
-    // if(is_ip_any(flow)){
-
-    //     wc->masks.nw_tos |= IP_ECN_MASK;
-    //     flow->nw_tos = 3<<2;
-    //     flow->nw_tos |= 2;
-    //     fprintf(fp, "wc_tos:%8u\n", wc->masks.nw_tos);
-    //     fprintf(fp, "flow_tos:%8u\n", flow->nw_tos);
-    //     fprintf(fp, "upcall_flow_tos:%8u\n", ctx->xin->upcall_flow->nw_tos);
-    //     // flow->nw_tos &= ~IP_ECN_MASK;
-    //     // flow->nw_tos |= ofpact_get_SET_IP_ECN(a)->ecn;
-    // }
 
 
     //get hash table for datapath named datapath_name
@@ -4107,7 +4125,6 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
             offset += sprintf(outbuf+offset,"not_new_flowlet!\n");
             // fprintf(fp,"new_flowlet!\n");
             //fflush(fp);
-
             struct last_output_port_hash *s;
 
             s = get_last_output_port(datapath_hash_table, key);
@@ -4122,26 +4139,20 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 
     //fprintf(fp, "output port:%64u\n\n", output_port);
     // fflush(fp);
+    dscp = (uint8_t)flowlet_priority(lt->flowlet_count);
+    offset += sprintf(outbuf+offset,"dscp : %8u\n",dscp);
+    if(ctx->xin->packet){
+        ipv4_change_dsfield((struct ip_header *)dp_packet_l3(ctx->xin->packet), 0x00, (dscp << 2)|2);
+    }
+    dscp_set_queue(ctx,dscp);
+    offset += sprintf(outbuf+offset,"skb_priority %32u\n",ctx->xin->flow.skb_priority); 
+
 
     if (bucket) {
         xlate_group_bucket(ctx, bucket);
-
-//        fprintf(fp,"f11:execute xlate_group_bucket over\n");
-//        fflush(fp);
-
         xlate_group_stats(ctx, group, bucket);
-
-//        fprintf(fp,"f11:execute action bucket over\n\n");
-//        fflush(fp);
-
     }else if (ctx->xin->xcache) {
-//        fprintf(fp,"f11:bucket is none,excute ctx xin xcache\n");
-//        fflush(fp);
-
         ofproto_group_unref(&group->up);
-//
-//        fprintf(fp,"f11:ofproto_group_unref run over\n\n");
-//        fflush(fp);
     }
 
     fprintf(fp, "%s\n\n",outbuf);
@@ -4837,8 +4848,10 @@ static void
 xlate_set_queue_action(struct xlate_ctx *ctx, uint32_t queue_id)
 {
     uint32_t skb_priority;
+    // fprintf(fp, "queue_id:%32u\n", queue_id);
 
     if (!dpif_queue_to_priority(ctx->xbridge->dpif, queue_id, &skb_priority)) {
+        // fprintf(fp, "skb_priority:%32u\n", skb_priority);
         ctx->xin->flow.skb_priority = skb_priority;
     } else {
         /* Couldn't translate queue to a priority.  Nothing to do.  A warning
@@ -5955,7 +5968,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
             freeze_unroll_actions(a, ofpact_end(ofpacts, ofpacts_len), ctx);
             break;
         }
-    }
+    }    
 }
 
 void
