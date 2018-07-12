@@ -3965,7 +3965,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     // struct flow * flow = CONST_CAST(struct flow *, ctx->xin->upcall_flow);
     // const struct ofpact *a;
 
-    char *outbuf = (char)malloc(sizeof(char)*1024);
+    char *outbuf = (char*)malloc(sizeof(char)*1024);
     int offset = 0;
     // const void *data = dp_packet_data(ctx->xin->packet);
 
@@ -3988,9 +3988,9 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     // offset = sprintf(outbuf, "ip_tos:%8u\n", nh->ip_tos);
     // fprintf(fp, "ip_tos:%8u\n", nh->ip_tos);
     // nh->ip_tos = 3;
-    if(is_ip_any(&ctx->xin->flow)){
+    // if(is_ip_any(&ctx->xin->flow)){
         ipv4_change_dsfield((struct ip_header *)dp_packet_l3(ctx->xin->packet), 0x00, (7 << 2)|2);
-    }
+    // }
 
     
     // struct ip_header *nh2 = dp_packet_l3(b);
@@ -4016,7 +4016,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     if( datapath_hash_table == NULL){
         datapath_hash_table = add_dp_hash_table(datapath_name);
     }
-    offset += sprintf(outbuf+offset,"packet_counter %" PRId64 "\n", ++datapath_hash_table->packet_count);
+    offset = sprintf(outbuf,"packet_counter %" PRId64 "\n", ++datapath_hash_table->packet_count);
     // fprintf(fp,"packet counter %" PRId64 "\n", ++datapath_hash_table->packet_count);
     //fflush(fp);
 
@@ -4087,7 +4087,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
             // fprintf(fp,"flowlet_counter %" PRId64 "\n",++ datapath_hash_table->flowlet_count);
             //fflush(fp);
 
-            lt->flowlet_count = lt->flowlet_count + 1;
+            lt->flowlet_count = lt->flowlet_count+1;
 
             bucket = get_flowlet_random_bucket(group);
 
@@ -4113,7 +4113,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
         }
     }
 
-    offset += sprintf(buf+offset, "%s flow_hash_key %32u: flowlet_count %" PRId64 "\n",datapath_name,key,lt->flowlet_count);
+    offset += sprintf(outbuf+offset, "%s flow_hash_key %32u: flowlet_count %" PRId64 "\n",datapath_name,key,lt->flowlet_count);
     // fprintf(fp, "current flowlet size:%64lu\n", datapath_hash_table->current_flowlet_size);
 
     //fprintf(fp, "output port:%64u\n\n", output_port);
