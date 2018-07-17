@@ -101,7 +101,6 @@ struct dp_hash_tables{
     char *br_name;
     uint64_t packet_count;
     uint64_t flowlet_count;
-    uint64_t flow_count;
     uint64_t current_flowlet_size;
     uint64_t last_flowlet_size;
     struct last_time_hash *last_times;
@@ -3762,7 +3761,6 @@ struct dp_hash_tables *add_dp_hash_table (char *bridge_name){
     s->last_output_ports = NULL;
     s->packet_count = 0;
     s->flowlet_count = 0;
-    s->flow_count = 0;
     s->br_name = bridge_name;
     s->current_flowlet_size = 0;
     s->last_flowlet_size = 0;
@@ -3949,8 +3947,6 @@ static void ipv4_change_dsfield(struct ip_header *iph,__u8 mask,
     iph->ip_csum = (OVS_FORCE uint16_t )htons(check);
     iph->ip_tos = dsfield;
 }
-
-
 static int flowlet_priority(uint64_t size){
         int i = 0;
 
@@ -4001,8 +3997,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 
     char *outbuf = (char*)malloc(sizeof(char)*1024);
     int offset = 0;
-    uint8_t dscp = 0;
-    uint8_t tos = 0;
+    int dscp = 0;
     // const void *data = dp_packet_data(ctx->xin->packet);
 
     // uint16_t dl_type;
@@ -4050,11 +4045,9 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
    
     struct ofputil_bucket *bucket; //the bucket need to be excuted
     uint32_t output_port;
-
     if (lt == NULL) { //new flow
-        offset += sprintf(outbuf+offset,"new_flow:   %" PRId64 ",hash_key %32u\n", ++datapath_hash_table->flow_count,key);       
+        offset += sprintf(outbuf+offset,"new_flow ,hash_key %32u\n",key);       
         // fprintf(fp,"new flow\n");
-
 
         lt = update_last_time_hash(datapath_hash_table, key, current_time);//add time for new flowlet to hash table
 
@@ -4117,15 +4110,6 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     }
     offset += sprintf(outbuf+offset, "%s flow_hash_key %32u: flow_flowlet_count %" PRId64 "\n",datapath_name,key,lt->flowlet_count);
     // fprintf(fp, "current flowlet size:%64lu\n", datapath_hash_table->current_flowlet_size);
-    if(ctx->xin->packet){
-        struct ip_header *iph =  (struct ip_header *)dp_packet_l3(ctx->xin->packet);
-        if(iph){
-            tos = iph->ip_tos;
-            dscp = tos>>2;//(tos & 0xfc)>>2;
-            dscp_set_queue(ctx,dscp);
-        }
-
-    }
 
     //fprintf(fp, "output port:%64u\n\n", output_port);
     // fflush(fp);
@@ -4135,7 +4119,7 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     //     ipv4_change_dsfield((struct ip_header *)dp_packet_l3(ctx->xin->packet), 0x00, (dscp << 2)|2);
     // }
     // dscp_set_queue(ctx,dscp);
-    offset += sprintf(outbuf+offset,"skb_priority %32u, dscp: %8u \n",ctx->xin->flow.skb_priority,dscp); 
+    // offset += sprintf(outbuf+offset,"skb_priority %32u\n",ctx->xin->flow.skb_priority); 
 
 
     if (bucket) {

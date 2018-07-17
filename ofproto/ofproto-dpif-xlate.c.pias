@@ -101,7 +101,6 @@ struct dp_hash_tables{
     char *br_name;
     uint64_t packet_count;
     uint64_t flowlet_count;
-    uint64_t flow_count;
     uint64_t current_flowlet_size;
     uint64_t last_flowlet_size;
     struct last_time_hash *last_times;
@@ -3762,7 +3761,6 @@ struct dp_hash_tables *add_dp_hash_table (char *bridge_name){
     s->last_output_ports = NULL;
     s->packet_count = 0;
     s->flowlet_count = 0;
-    s->flow_count = 0;
     s->br_name = bridge_name;
     s->current_flowlet_size = 0;
     s->last_flowlet_size = 0;
@@ -4052,9 +4050,8 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     uint32_t output_port;
 
     if (lt == NULL) { //new flow
-        offset += sprintf(outbuf+offset,"new_flow:   %" PRId64 ",hash_key %32u\n", ++datapath_hash_table->flow_count,key);       
+        offset += sprintf(outbuf+offset,"new_flow ,hash_key %32u\n",key);       
         // fprintf(fp,"new flow\n");
-
 
         lt = update_last_time_hash(datapath_hash_table, key, current_time);//add time for new flowlet to hash table
 

@@ -101,7 +101,6 @@ struct dp_hash_tables{
     char *br_name;
     uint64_t packet_count;
     uint64_t flowlet_count;
-    uint64_t flow_count;
     uint64_t current_flowlet_size;
     uint64_t last_flowlet_size;
     struct last_time_hash *last_times;
@@ -3762,7 +3761,6 @@ struct dp_hash_tables *add_dp_hash_table (char *bridge_name){
     s->last_output_ports = NULL;
     s->packet_count = 0;
     s->flowlet_count = 0;
-    s->flow_count = 0;
     s->br_name = bridge_name;
     s->current_flowlet_size = 0;
     s->last_flowlet_size = 0;
@@ -3794,19 +3792,26 @@ random_index(int range){
     return rand_int;
 }
 
+/*
 static int
-ecmp_index(int range,int key){
+random_index(int range){
     uint64_t time = 0;
     int rand_int;
-    // struct timeval current_time;
+    int temp;
+    struct timeval current_time;
 
-    // gettimeofday(&current_time, NULL);
-    // time = current_time.tv_sec * 3 + current_time.tv_usec * 13;
-    // rand_int = time % range;
-    rand_int = key%range;
-
+    gettimeofday(&current_time, NULL);
+    time = current_time.tv_sec * 3 + current_time.tv_usec * 13;
+    temp = time % 3;
+    if(temp==2){
+        rand_int = 0;
+    }else{
+        rand_int = 1;
+    }
+    
     return rand_int;
 }
+*/
 
 
 
@@ -3874,7 +3879,7 @@ struct ofputil_bucket *get_flowlet_last_bucket(struct xlate_ctx *ctx, struct gro
 }
 
 static
-struct ofputil_bucket *get_flowlet_ecmp_bucket(struct group_dpif *group,uint32_t key){
+struct ofputil_bucket *get_flowlet_random_bucket(struct group_dpif *group){
     //get ofputil bucket according to the ouput port
     struct ofputil_bucket *bucket = NULL;
     int bucket_num = 0;
@@ -3915,7 +3920,7 @@ struct ofputil_bucket *get_flowlet_ecmp_bucket(struct group_dpif *group,uint32_t
     }
 
     //random choose one bucket from buckets
-    rand_int = ecmp_index(bucket_num,(int)key);
+    rand_int = random_index(bucket_num);
 
     struct bucket_gzq *bucket_find;
     bucket_find = head;
@@ -3949,8 +3954,6 @@ static void ipv4_change_dsfield(struct ip_header *iph,__u8 mask,
     iph->ip_csum = (OVS_FORCE uint16_t )htons(check);
     iph->ip_tos = dsfield;
 }
-
-
 static int flowlet_priority(uint64_t size){
         int i = 0;
 
@@ -3997,12 +4000,15 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     uint16_t tcp_dst;
     //char *datapath_name;
     struct dp_hash_tables *datapath_hash_table;
-
+    // struct flow_wildcards *wc = ctx->wc;
+    // const struct dp_packet *b = ctx->xin->packet;
+    // struct dp_packet *packet = CONST_CAST(struct dp_packet *, b);
+    // struct flow * flow = CONST_CAST(struct flow *, ctx->xin->upcall_flow);
+    // const struct ofpact *a;
 
     char *outbuf = (char*)malloc(sizeof(char)*1024);
     int offset = 0;
-    uint8_t dscp = 0;
-    uint8_t tos = 0;
+    int dscp = 0;
     // const void *data = dp_packet_data(ctx->xin->packet);
 
     // uint16_t dl_type;
@@ -4010,6 +4016,21 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
     
     // fprintf(fp,"packet dl_type %16u\n",dl_type);
     strcpy(datapath_name, ctx->xbridge->name);
+    // fprintf(fp,"datapath:%s\n", datapath_name);
+
+    // struct ip_header *nh = dp_packet_l3(b);
+    // offset = sprintf(outbuf, "ip_tos:%8u\n", nh->ip_tos);
+    // fprintf(fp, "ip_tos:%8u\n", nh->ip_tos);
+    // nh->ip_tos = 3;
+    // if(is_ip_any(&ctx->xin->flow)){
+
+    // }
+    
+    // struct ip_header *nh2 = dp_packet_l3(b);
+    // offset += sprintf(outbuf+offset, "ip_tos2:%8u\n", nh2->ip_tos);
+   
+    // fprintf(fp, "ip_tos2:%8u\n", nh2->ip_tos);
+
 
 
     //get hash table for datapath named datapath_name
@@ -4050,17 +4071,15 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
    
     struct ofputil_bucket *bucket; //the bucket need to be excuted
     uint32_t output_port;
-
     if (lt == NULL) { //new flow
-        offset += sprintf(outbuf+offset,"new_flow:   %" PRId64 ",hash_key %32u\n", ++datapath_hash_table->flow_count,key);       
+        offset += sprintf(outbuf+offset,"new_flow ,hash_key %32u\n",key);       
         // fprintf(fp,"new flow\n");
-
 
         lt = update_last_time_hash(datapath_hash_table, key, current_time);//add time for new flowlet to hash table
 
         lt->flowlet_count = 1;
         
-        bucket = get_flowlet_ecmp_bucket(group,key);
+        bucket = get_flowlet_random_bucket(group);
 
         output_port = get_output_port_from_bucket(ctx, bucket);
 
@@ -4084,25 +4103,25 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
         update_last_time_hash(datapath_hash_table, key, current_time);
 
         //3.if timeout is occured, random choose one output port and record
-        // if (time_diff >= timeout) {//trigger a new flowlet
-        //     offset += sprintf(outbuf+offset, "new_flowlet\n");
-        //     // fprintf(fp, "timeout! trigger a new flow"flowlet_counter %" PRId64 "\n",++ datapath_hash_table->flowlet_count);let\n");
-        //     offset += sprintf(outbuf+offset,"datapath_flowlet_counter %" PRId64 "\n",++ datapath_hash_table->flowlet_count);
-        //     // fprintf(fp,"flowlet_counter %" PRId64 "\n",++ datapath_hash_table->flowlet_count);
-        //     //fflush(fp);
+        if (time_diff >= timeout) {//trigger a new flowlet
+            offset += sprintf(outbuf+offset, "new_flowlet\n");
+            // fprintf(fp, "timeout! trigger a new flow"flowlet_counter %" PRId64 "\n",++ datapath_hash_table->flowlet_count);let\n");
+            offset += sprintf(outbuf+offset,"datapath_flowlet_counter %" PRId64 "\n",++ datapath_hash_table->flowlet_count);
+            // fprintf(fp,"flowlet_counter %" PRId64 "\n",++ datapath_hash_table->flowlet_count);
+            //fflush(fp);
 
-        //     lt->flowlet_count = lt->flowlet_count+1;
+            lt->flowlet_count = lt->flowlet_count+1;
 
-        //     bucket = get_flowlet_ecmp_bucket(group,key);
+            bucket = get_flowlet_random_bucket(group);
 
-        //     output_port = get_output_port_from_bucket(ctx, bucket);
+            output_port = get_output_port_from_bucket(ctx, bucket);
 
-        //     update_last_output_port_hash(datapath_hash_table, key, output_port);
-        //     new_data_record(datapath_hash_table);
-        //     // fprintf(fp, "last flowlet size:%64lu\n", datapath_hash_table->last_flowlet_size);
-        //     datapath_hash_table->current_flowlet_size = datapath_hash_table->current_flowlet_size + (ctx->xin->packet ? ctx->xin->packet->size_ : 58);
+            update_last_output_port_hash(datapath_hash_table, key, output_port);
+            new_data_record(datapath_hash_table);
+            // fprintf(fp, "last flowlet size:%64lu\n", datapath_hash_table->last_flowlet_size);
+            datapath_hash_table->current_flowlet_size = datapath_hash_table->current_flowlet_size + (ctx->xin->packet ? ctx->xin->packet->size_ : 58);
 
-        // } else {//not trigger a new flowlet
+        } else {//not trigger a new flowlet
             offset += sprintf(outbuf+offset,"not_new_flowlet!\n");
             // fprintf(fp,"new_flowlet!\n");
             //fflush(fp);
@@ -4113,29 +4132,20 @@ xlate_hash_fields_select_group(struct xlate_ctx *ctx, struct group_dpif *group)
 
             bucket = get_flowlet_last_bucket(ctx, group, output_port);
             datapath_hash_table->current_flowlet_size = datapath_hash_table->current_flowlet_size + (ctx->xin->packet ? ctx->xin->packet->size_ : 58);
-        // }
+        }
     }
     offset += sprintf(outbuf+offset, "%s flow_hash_key %32u: flow_flowlet_count %" PRId64 "\n",datapath_name,key,lt->flowlet_count);
     // fprintf(fp, "current flowlet size:%64lu\n", datapath_hash_table->current_flowlet_size);
-    if(ctx->xin->packet){
-        struct ip_header *iph =  (struct ip_header *)dp_packet_l3(ctx->xin->packet);
-        if(iph){
-            tos = iph->ip_tos;
-            dscp = tos>>2;//(tos & 0xfc)>>2;
-            dscp_set_queue(ctx,dscp);
-        }
-
-    }
 
     //fprintf(fp, "output port:%64u\n\n", output_port);
     // fflush(fp);
-    // dscp = (uint8_t)flowlet_priority(lt->flowlet_count);
-    // offset += sprintf(outbuf+offset,"dscp : %8u\n",dscp);
-    // if(ctx->xin->packet){
-    //     ipv4_change_dsfield((struct ip_header *)dp_packet_l3(ctx->xin->packet), 0x00, (dscp << 2)|2);
-    // }
-    // dscp_set_queue(ctx,dscp);
-    offset += sprintf(outbuf+offset,"skb_priority %32u, dscp: %8u \n",ctx->xin->flow.skb_priority,dscp); 
+    dscp = (uint8_t)flowlet_priority(lt->flowlet_count);
+    offset += sprintf(outbuf+offset,"dscp : %8u\n",dscp);
+    if(ctx->xin->packet){
+        ipv4_change_dsfield((struct ip_header *)dp_packet_l3(ctx->xin->packet), 0x00, (dscp << 2)|2);
+    }
+    dscp_set_queue(ctx,dscp);
+    offset += sprintf(outbuf+offset,"skb_priority %32u\n",ctx->xin->flow.skb_priority); 
 
 
     if (bucket) {
